@@ -1,0 +1,17 @@
+# Python stuff
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.idea
+
+# Database
+db.sqlite3
+*.sqlite3
+
+# Logs
+*.log
+
+# IDE settings
+.idea/
+.vscode/
