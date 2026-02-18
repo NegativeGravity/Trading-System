@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>
+            <i class="fas fa-file-contract"></i> Session #{{ session.id }}
+            <small class="text-muted fs-6">({{ session.symbol }} | {{ session.agent_name }})</small>
+        </h2>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center p-3 bg-dark border-secondary">
+                <h6 class="text-muted">Net Profit</h6>
+                <h3 class="{% if session.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    ${{ session.net_profit|stringformat:".2f" }}
+                </h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center p-3 bg-dark border-secondary">
+                <h6 class="text-muted">Win Rate</h6>
+                <h3>{{ session.win_rate|stringformat:".1f" }}%</h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center p-3 bg-dark border-secondary">
+                <h6 class="text-muted">Max Drawdown</h6>
+                <h3 class="text-danger">{{ session.max_drawdown_percent|stringformat:".2f" }}%</h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center p-3 bg-dark border-secondary">
+                <h6 class="text-muted">Total Trades</h6>
+                <h3>{{ session.total_trades }}</h3>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4 bg-dark border-secondary">
+        <div class="card-header d-flex justify-content-between">
+            <span><i class="fas fa-chart-candlestick"></i> Interactive Price Chart</span>
+            <small class="text-muted">Scroll to zoom, Drag to move</small>
+        </div>
+        <div class="card-body p-0">
+            <div id="tv-chart" style="width: 100%; height: 600px;"></div>
+        </div>
+    </div>
+
+    <div class="card bg-dark border-secondary">
+        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#tradeHistory">
+            <i class="fas fa-list"></i> Trade History (Click to expand)
+        </div>
+        <div id="tradeHistory" class="collapse show">
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-dark table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Ticket</th>
+                            <th>Type</th>
+                            <th>Open Time</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>P/L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for trade in trades %}
+                        <tr>
+                            <td>#{{ trade.ticket }}</td>
+                            <td><span class="badge {% if trade.direction == 'BUY' %}bg-success{% else %}bg-danger{% endif %}">{{ trade.direction }}</span></td>
+                            <td>{{ trade.open_time|date:"Y-m-d H:i" }}</td>
+                            <td>{{ trade.entry_price }}</td>
+                            <td>{{ trade.exit_price }}</td>
+                            <td class="{% if trade.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">${{ trade.net_profit|stringformat:".2f" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // 1. دریافت داده‌ها از جنگو
+        const candleData = JSON.parse('{{ chart_data_json|safe }}');
+        const volumeData = JSON.parse('{{ volume_data_json|safe }}');
+        const markersData = JSON.parse('{{ markers_data_json|safe }}');
+
+        if (candleData.length === 0) {
+            document.getElementById('tv-chart').innerHTML = '<div class="p-5 text-center text-muted">No Chart Data Available</div>';
+            return;
+        }
+
+        // 2. تنظیمات چارت (Dark Theme TradingView)
+        const chartOptions = {
+            layout: {
+                background: { type: 'solid', color: '#1e1e1e' },
+                textColor: '#d1d4dc',
+            },
+            grid: {
+                vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
+                horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+            },
+            rightPriceScale: {
+                borderColor: 'rgba(197, 203, 206, 0.8)',
+            },
+            timeScale: {
+                borderColor: 'rgba(197, 203, 206, 0.8)',
+                timeVisible: true,
+                secondsVisible: false,
+            },
+        };
+
+        // 3. ایجاد چارت
+        const container = document.getElementById('tv-chart');
+        const chart = LightweightCharts.createChart(container, chartOptions);
+
+        // 4. سری کندل (Candlestick Series)
+        const candlestickSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            borderVisible: false,
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+        });
+        candlestickSeries.setData(candleData);
+
+        // 5. سری حجم (Volume Series) - به صورت هیستوگرام پایین
+        const volumeSeries = chart.addHistogramSeries({
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // set as an overlay
+        });
+        volumeSeries.priceScale().applyOptions({
+            scaleMargins: {
+                top: 0.8, // حجم پایین صفحه باشد
+                bottom: 0,
+            },
+        });
+        volumeSeries.setData(volumeData);
+
+        // 6. افزودن مارکرها (تریدها)
+        candlestickSeries.setMarkers(markersData);
+
+        // 7. ریسپانسیو کردن چارت
+        new ResizeObserver(entries => {
+            if (entries.length === 0 || entries[0].target !== container) { return; }
+            const newRect = entries[0].contentRect;
+            chart.applyOptions({ height: newRect.height, width: newRect.width });
+        }).observe(container);
+
+        // فیت کردن چارت برای نمایش کل داده‌ها
+        chart.timeScale().fitContent();
+    });
+</script>
+{% endblock %}

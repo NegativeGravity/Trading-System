@@ -22,6 +22,12 @@ class MT5Executor:
         print("✅ Connected to MetaTrader 5 (Live)")
         return True
 
+    def shutdown(self):
+        if self.is_connected:
+            mt5.shutdown()
+            self.is_connected = False
+            print("✅ MT5 Connection Closed")
+
     def get_candles(self, symbol: str, timeframe_minutes: int, count: int = 1):
         if not self.is_connected: return []
         tf_constant = self.timeframe_map.get(timeframe_minutes, mt5.TIMEFRAME_M5)
