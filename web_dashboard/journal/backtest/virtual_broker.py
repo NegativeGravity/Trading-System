@@ -1,137 +1,169 @@
 from trader.domain.models import SignalType
+from datetime import datetime
 
 
 class AdvancedVirtualBroker:
-    def __init__(self, initial_balance=10000.0, spread=0.15, digits=2, stop_level=0):
+    def __init__(self, initial_balance=10000.0, spread=0.15, digits=2, leverage=100, contract_size=100,
+                 commission_per_lot=3.0, stop_level_points=10):
+        # Financial Accounts
         self.balance = initial_balance
         self.equity = initial_balance
+        self.margin = 0.0
+        self.free_margin = initial_balance
+        self.peak_balance = initial_balance
+        self.max_drawdown_amount = 0.0
+        self.max_drawdown_percent = 0.0
+
+        # Broker Specifications
         self.spread = spread
         self.digits = digits
-        self.stop_level_points = stop_level
         self.point = 1 / (10 ** digits)
+        self.leverage = leverage
+        self.contract_size = contract_size
+        self.commission_per_lot = commission_per_lot
+        self.stop_level_points = stop_level_points
 
-        self.positions = []
+        # Database
+        self.positions = {}  # Dictionary for direct ticket lookup
         self.closed_history = []
-        self.peak_balance = initial_balance
-        self.max_drawdown_percent = 0.0
-        self.max_drawdown_amount = 0.0
         self.ticket_counter = 1
 
-    def _normalize(self, price):
+    def normalize(self, price: float) -> float:
         return round(price, self.digits)
 
-    def _is_stop_level_valid(self, price, sl, tp, direction):
-        """Simulates MT5 Broker Stop Level restrictions."""
-        min_dist = (self.stop_level_points * self.point) + self.spread
-        if direction == SignalType.BUY:
-            if sl > 0 and (price - sl) < min_dist: return False
-            if tp > 0 and (tp - price) < min_dist: return False
+    def get_bid_ask(self, price: float):
+        return self.normalize(price), self.normalize(price + self.spread)
+
+    def get_positions(self, symbol=None):
+        if symbol:
+            return [p for p in self.positions.values() if p['symbol'] == symbol]
+        return list(self.positions.values())
+
+    def update_market_movement(self, candle):
+        if candle.close >= candle.open:
+            ticks = [candle.open, candle.low, candle.high, candle.close]
         else:
-            if sl > 0 and (sl - price) < min_dist: return False
-            if tp > 0 and (price - tp) < min_dist: return False
-        return True
+            ticks = [candle.open, candle.high, candle.low, candle.close]
 
-    def execute_order(self, order_or_signal, timestamp):
-        """
-        Handles execution for both 'Order' and 'Signal' objects.
-        Matches MT5Executor logic 100%.
-        """
-        # 1. Determine Direction (Handle both Order and Signal objects)
-        direction = getattr(order_or_signal, 'order_type', getattr(order_or_signal, 'signal_type', None))
+        for tick_price in ticks:
+            bid, ask = self.get_bid_ask(tick_price)
+            self._check_sl_tp(bid, ask, candle.timestamp)
 
-        if direction is None:
-            print("❌ Error: Valid direction not found in object.")
-            return
+        final_bid, final_ask = self.get_bid_ask(candle.close)
+        self.update_equity(final_bid, final_ask)
 
-        # 2. Extract common attributes
-        volume = order_or_signal.volume
-        sl_raw = order_or_signal.stop_loss
-        tp_raw = order_or_signal.take_profit
-        symbol = order_or_signal.symbol
-        comment = getattr(order_or_signal, 'comment', getattr(order_or_signal, 'reason', "Auto"))
-        base_price = order_or_signal.price
+    def _check_sl_tp(self, bid: float, ask: float, timestamp: datetime):
+        for ticket, pos in list(self.positions.items()):
+            exit_price = None
+            reason = ""
 
-        # 3. Handle Flipping (Hedging Logic)
-        for pos in list(self.positions):
-            if pos['type'] != direction:
-                # Close opposite positions using the signal price as a proxy for market price
-                self.close_position(pos, base_price, timestamp, "Signal Flip")
+            if pos['type'] == SignalType.BUY:
+                if pos['sl'] > 0 and bid <= pos['sl']:
+                    exit_price = min(pos['sl'], bid)  # Slippage: if bid gapped below SL, exit at bid
+                    reason = "SL"
+                elif pos['tp'] > 0 and bid >= pos['tp']:
+                    exit_price = max(pos['tp'], bid)
+                    reason = "TP"
+            else:
+                if pos['sl'] > 0 and ask >= pos['sl']:
+                    exit_price = max(pos['sl'], ask)  # Slippage: if ask gapped above SL, exit at ask
+                    reason = "SL"
+                elif pos['tp'] > 0 and ask <= pos['tp']:
+                    exit_price = min(pos['tp'], ask)
+                    reason = "TP"
 
-        # 4. Calculate Entry Prices
-        ask = self._normalize(base_price + self.spread)
-        bid = self._normalize(base_price)
+            if exit_price is not None:
+                self.close_position(ticket, exit_price, timestamp, reason, raw_price_provided=False)
 
-        entry_p = ask if direction == SignalType.BUY else bid
+    def open_position(self, direction: SignalType, volume: float, raw_price: float, sl: float, tp: float, symbol: str,
+                      magic: int, comment: str, timestamp: datetime):
+        bid, ask = self.get_bid_ask(raw_price)
+        entry_price = ask if direction == SignalType.BUY else bid
 
-        # 5. Validate & Normalize SL/TP
-        sl = self._normalize(sl_raw)
-        tp = self._normalize(tp_raw)
+        required_margin = (volume * self.contract_size * entry_price) / self.leverage
+        commission = volume * self.commission_per_lot
 
-        # Reset invalid stops to 0 (Simulating broker rejection)
-        if not self._is_stop_level_valid(entry_p, sl, tp, direction):
-            sl, tp = 0.0, 0.0
+        if self.free_margin < (required_margin + commission):
+            print(f"⚠️ Broker Rejected: Insufficient Free Margin. Req: ${required_margin:.2f}")
+            return None
 
-            # 6. Open New Position
-        self.positions.append({
+        self.balance -= commission
+
+        new_pos = {
             'ticket': self.ticket_counter,
+            'magic': magic,
             'type': direction,
-            'entry_price': entry_p,
+            'entry_price': entry_price,
             'volume': volume,
-            'sl': sl, 'tp': tp,
+            'sl': self.normalize(sl),
+            'tp': self.normalize(tp),
             'open_time': timestamp,
             'symbol': symbol,
             'entry_reason': comment,
-        })
+            'commission': commission
+        }
+
+        self.positions[self.ticket_counter] = new_pos
         self.ticket_counter += 1
 
-    def check_sl_tp(self, candle):
-        """Checks if High/Low hit SL or TP."""
-        ask_low = self._normalize(candle.low + self.spread)
-        ask_high = self._normalize(candle.high + self.spread)
-        bid_low = self._normalize(candle.low)
-        bid_high = self._normalize(candle.high)
+        self.margin += required_margin
+        self.update_equity(bid, ask)
+        return new_pos['ticket']
 
-        for pos in list(self.positions):
-            exit_p, reason = None, ""
-            if pos['type'] == SignalType.BUY:
-                if pos['sl'] > 0 and bid_low <= pos['sl']:
-                    exit_p, reason = pos['sl'], "SL"
-                elif pos['tp'] > 0 and bid_high >= pos['tp']:
-                    exit_p, reason = pos['tp'], "TP"
-            else:
-                if pos['sl'] > 0 and ask_high >= pos['sl']:
-                    exit_p, reason = pos['sl'], "SL"
-                elif pos['tp'] > 0 and ask_low <= pos['tp']:
-                    exit_p, reason = pos['tp'], "TP"
+    def close_position(self, ticket: int, raw_price: float, timestamp: datetime, reason: str,
+                       raw_price_provided: bool = True):
+        if ticket not in self.positions: return
+        pos = self.positions[ticket]
 
-            if exit_p: self.close_position(pos, exit_p, candle.timestamp, reason)
+        if raw_price_provided:
+            bid, ask = self.get_bid_ask(raw_price)
+            exit_price = bid if pos['type'] == SignalType.BUY else ask
+        else:
+            exit_price = raw_price
 
-    def close_position(self, pos, price, timestamp, reason):
-        multiplier = 100 if "XAU" in pos['symbol'] else 100000
-        side = 1 if pos['type'] == SignalType.BUY else -1
-        profit = (price - pos['entry_price']) * side * pos['volume'] * multiplier
+        profit = 0
+        if pos['type'] == SignalType.BUY:
+            profit = (exit_price - pos['entry_price']) * pos['volume'] * self.contract_size
+        else:
+            profit = (pos['entry_price'] - exit_price) * pos['volume'] * self.contract_size
+
         self.balance += profit
+
+        released_margin = (pos['volume'] * self.contract_size * pos['entry_price']) / self.leverage
+        self.margin = max(0.0, self.margin - released_margin)
 
         self.closed_history.append({
             **pos,
-            'exit_price': self._normalize(price),
+            'exit_price': self.normalize(exit_price),
             'close_time': timestamp,
-            'net_profit': profit,
             'gross_profit': profit,
+            'net_profit': profit - pos['commission'],
             'exit_reason': reason,
             'duration': (timestamp - pos['open_time']).total_seconds() / 60
         })
-        self.positions.remove(pos)
 
-    def update_equity(self, current_close):
-        floating_pl = 0
-        for pos in self.positions:
-            side = 1 if pos['type'] == SignalType.BUY else -1
-            price = current_close if pos['type'] == SignalType.BUY else (current_close + self.spread)
-            floating_pl += (price - pos['entry_price']) * side * pos['volume'] * 100
+        del self.positions[ticket]
+
+        if raw_price_provided:
+            bid, ask = self.get_bid_ask(raw_price)
+            self.update_equity(bid, ask)
+
+    def update_equity(self, current_bid: float, current_ask: float):
+        floating_pl = 0.0
+        for pos in self.positions.values():
+            current_price = current_bid if pos['type'] == SignalType.BUY else current_ask
+            if pos['type'] == SignalType.BUY:
+                floating_pl += (current_price - pos['entry_price']) * pos['volume'] * self.contract_size
+            else:
+                floating_pl += (pos['entry_price'] - current_price) * pos['volume'] * self.contract_size
 
         self.equity = self.balance + floating_pl
-        self.peak_balance = max(self.peak_balance, self.equity)
-        dd = self.peak_balance - self.equity
-        self.max_drawdown_amount = max(self.max_drawdown_amount, dd)
-        self.max_drawdown_percent = max(self.max_drawdown_percent, (dd / self.peak_balance) * 100)
+        self.free_margin = self.equity - self.margin
+
+        if self.equity > self.peak_balance:
+            self.peak_balance = self.equity
+
+        current_drawdown = self.peak_balance - self.equity
+        if current_drawdown > self.max_drawdown_amount:
+            self.max_drawdown_amount = current_drawdown
+            self.max_drawdown_percent = (current_drawdown / self.peak_balance) * 100

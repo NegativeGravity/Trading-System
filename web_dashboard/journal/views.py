@@ -1,21 +1,20 @@
 import sys
+import datetime
+import json
+from django.shortcuts import render, get_object_or_404
+from django.utils.timezone import make_aware, is_naive
+
 PROJECT_ROOT = r"G:\Trading-System"
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from django.shortcuts import render, get_object_or_404
-from django.utils.timezone import make_aware, is_naive
 from .models import BacktestSession
 from trader.executor.mt5_executor import MT5Executor
 from trader.domain.models import Candle
-import datetime
-import json
-
 
 def dashboard(request):
     sessions = BacktestSession.objects.all().order_by('-created_at')
     return render(request, 'journal/dashboard.html', {'sessions': sessions})
-
 
 def session_detail(request, session_id):
     session = get_object_or_404(BacktestSession, pk=session_id)
@@ -45,26 +44,33 @@ def session_detail(request, session_id):
                 if start_buffer <= c.timestamp <= end_buffer:
                     ts = int(c.timestamp.timestamp())
 
+                    # Cast explicitly to native Python types to prevent JSON serialization errors
                     chart_data.append({
                         'time': ts,
-                        'open': c.open,
-                        'high': c.high,
-                        'low': c.low,
-                        'close': c.close
+                        'open': float(c.open),
+                        'high': float(c.high),
+                        'low': float(c.low),
+                        'close': float(c.close)
                     })
 
-                    # داده حجم
                     color = '#26a69a' if c.close >= c.open else '#ef5350'
                     volume_data.append({
                         'time': ts,
-                        'value': c.volume,
+                        'value': int(c.volume),
                         'color': color
                     })
 
         mt5.shutdown()
 
+    # Track used timestamps to prevent TradingView chart crashes from duplicate marker times
+    used_times = set()
+
     for t in trades:
         entry_ts = int(t.open_time.timestamp())
+        while entry_ts in used_times:
+            entry_ts += 1
+        used_times.add(entry_ts)
+
         is_buy = t.direction == 'BUY'
 
         markers_data.append({
@@ -76,13 +82,17 @@ def session_detail(request, session_id):
         })
 
         exit_ts = int(t.close_time.timestamp())
+        while exit_ts in used_times:
+            exit_ts += 1
+        used_times.add(exit_ts)
+
         win = t.net_profit > 0
         markers_data.append({
             'time': exit_ts,
             'position': 'aboveBar' if is_buy else 'belowBar',
             'color': '#00E676' if win else '#FF1744',
             'shape': 'circle',
-            'text': f'EXIT ${t.net_profit:.2f}'
+            'text': f'EXIT ${float(t.net_profit):.2f}'
         })
 
     markers_data.sort(key=lambda x: x['time'])

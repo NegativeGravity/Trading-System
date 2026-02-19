@@ -1,10 +1,10 @@
 import sys
+from django.core.management.base import BaseCommand
 
 PROJECT_ROOT = r"G:\Trading-System"
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from django.core.management.base import BaseCommand
 from trader.executor.mt5_executor import MT5Executor
 from trader.domain.models import Candle
 from trader.agents.lorentzian_agent import LorentzianClassificationAgent
@@ -12,27 +12,25 @@ from journal.backtest.virtual_broker import AdvancedVirtualBroker
 from journal.backtest.engine import UnifiedEngine
 from journal.backtest.utils import save_backtest_results
 
-
 class Command(BaseCommand):
-    help = 'Runs Lorentzian Classification Backtest'
+    help = 'Runs Lorentzian Classification Machine Learning Backtest'
 
     def add_arguments(self, parser):
-        parser.add_argument('--days', type=int, default=5, help='Days to backtest')
+        parser.add_argument('--days', type=int, default=60)
+        parser.add_argument('--tf', type=int, default=5)
 
     def handle(self, *args, **kwargs):
         symbol = "XAUUSD"
-        days = kwargs['days']
-        balance = 10000
+        days = kwargs.get('days', 60)
+        timeframe = kwargs.get('tf', 5)
+        balance = 10000.0
         spread = 0.15
-        timeframe = 5  # Lorentzian standard timeframe
-        warmup_candles = 2000  # Required for ML Model Training
+        warmup_candles = 2000
 
         mt5 = MT5Executor()
-        if not mt5.connect(): return
+        if not mt5.connect():
+            return
 
-        print(f"🟣 [Lorentzian] Fetching Data (M{timeframe})...")
-
-        # Calculate total candles: Warmup + Backtest Period
         trading_candles_count = days * (1440 // timeframe)
         total_fetch = trading_candles_count + warmup_candles
 
@@ -40,33 +38,31 @@ class Command(BaseCommand):
         mt5.shutdown()
 
         if len(raw_data) < total_fetch:
-            print(f"❌ Not enough data. Needed {total_fetch}, got {len(raw_data)}")
             return
 
         all_candles = [Candle(symbol=symbol, **d) for d in raw_data]
-
-        # Split Data: Training (Warmup) vs. Trading (Backtest)
         training_data = all_candles[:warmup_candles]
         trading_data = all_candles[warmup_candles:]
 
-        # Init Agent
         agent = LorentzianClassificationAgent("Lorentzian_BT", magic_number=5005)
+        agent.history = [{
+            'open': c.open, 'high': c.high, 'low': c.low,
+            'close': c.close, 'volume': c.volume, 'timestamp': c.timestamp
+        } for c in training_data]
 
-        # ⚠️ CRITICAL: Pre-load history to match Live Mode behavior.
-        # In live mode, we fetch 2000 candles *before* the loop starts.
-        # Here, we feed the first 2000 candles to the agent's internal memory manually.
-        print(f"⚙️ Training Model with {len(training_data)} candles...")
-        agent.history = [d.__dict__ for d in training_data]  # Convert to dict as agent expects
-
-        # Init Engine
-        broker = AdvancedVirtualBroker(balance, spread, digits=2, stop_level=10)
+        broker = AdvancedVirtualBroker(
+            initial_balance=balance,
+            spread=spread,
+            digits=2,
+            stop_level_points=10
+        )
         engine = UnifiedEngine(agent, broker)
 
-        # Run Simulation on the remaining data
-        print(f"🚀 Running Backtest on {len(trading_data)} candles...")
-        broker, equity_curve = engine.run(trading_data)
+        broker, equity_curve = engine.run(
+            ltf_data=trading_data,
+            step_method='on_market_data'
+        )
 
-        # Save Results
         save_backtest_results(
             agent.name, symbol, f"M{timeframe}", balance, spread,
             trading_data, broker, equity_curve
