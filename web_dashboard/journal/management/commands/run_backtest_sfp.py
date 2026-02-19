@@ -1,7 +1,8 @@
 import sys
 from django.core.management.base import BaseCommand
+from django.conf import settings
 
-PROJECT_ROOT = r"G:\Trading-System"
+PROJECT_ROOT = str(settings.BASE_DIR.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
@@ -13,8 +14,6 @@ from journal.backtest.engine import UnifiedEngine
 from journal.backtest.utils import save_backtest_results
 
 class Command(BaseCommand):
-    help = 'Runs SFP Multi-Timeframe Strategy Backtest'
-
     def add_arguments(self, parser):
         parser.add_argument('--days', type=int, default=60)
 

@@ -1,163 +1,280 @@
 {% extends 'base.html' %}
 
 {% block content %}
+<style>
+    .chart-toolbar {
+        background: #1e222d;
+        padding: 8px 15px;
+        border-bottom: 1px solid #363c4e;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+    .btn-chart-ctrl {
+        background: #2a2e39;
+        border: 1px solid #434651;
+        color: #d1d4dc;
+        padding: 4px 12px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .btn-chart-ctrl:hover {
+        background: #363c4e;
+        color: white;
+    }
+    .btn-chart-ctrl.active {
+        background: #2962ff;
+        border-color: #2962ff;
+        color: white;
+    }
+    .stat-card {
+        background-color: #1e1e1e;
+        border: 1px solid #333;
+        text-align: center;
+        padding: 12px;
+    }
+    /* Toggle Switch Style */
+    .form-switch .form-check-input {
+        cursor: pointer;
+        width: 2.5em;
+        height: 1.25em;
+    }
+    .trade-table-container {
+        max-height: 350px;
+        overflow-y: auto;
+    }
+    .table-dark {
+        --bs-table-bg: #1e1e1e;
+    }
+</style>
+
 <div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>
-            <i class="fas fa-file-contract"></i> Session #{{ session.id }}
-            <small class="text-muted fs-6">({{ session.symbol }} | {{ session.agent_name }})</small>
-        </h2>
-        <a href="{% url 'dashboard' %}" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4>
+            <i class="fas fa-terminal text-primary"></i> Session #{{ session.id }}
+            <small class="text-muted fs-6">[{{ session.symbol }} | {{ session.agent_name }}]</small>
+        </h4>
+        <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-arrow-left"></i> Dashboard
+        </a>
     </div>
 
-    <div class="row mb-4">
+    <div class="row mb-3">
         <div class="col-md-3">
-            <div class="card text-center p-3 bg-dark border-secondary">
-                <h6 class="text-muted">Net Profit</h6>
-                <h3 class="{% if session.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+            <div class="stat-card card">
+                <small class="text-muted">Net Profit</small>
+                <h4 class="mb-0 {% if session.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
                     ${{ session.net_profit|stringformat:".2f" }}
-                </h3>
+                </h4>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-center p-3 bg-dark border-secondary">
-                <h6 class="text-muted">Win Rate</h6>
-                <h3>{{ session.win_rate|stringformat:".1f" }}%</h3>
+            <div class="stat-card card">
+                <small class="text-muted">Win Rate</small>
+                <h4 class="mb-0 text-info">{{ session.win_rate|stringformat:".1f" }}%</h4>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-center p-3 bg-dark border-secondary">
-                <h6 class="text-muted">Max Drawdown</h6>
-                <h3 class="text-danger">{{ session.max_drawdown_percent|stringformat:".2f" }}%</h3>
+            <div class="stat-card card">
+                <small class="text-muted">Max Drawdown</small>
+                <h4 class="mb-0 text-danger">{{ session.max_drawdown_percent|stringformat:".2f" }}%</h4>
             </div>
         </div>
         <div class="col-md-3">
-            <div class="card text-center p-3 bg-dark border-secondary">
-                <h6 class="text-muted">Total Trades</h6>
-                <h3>{{ session.total_trades }}</h3>
+            <div class="stat-card card">
+                <small class="text-muted">Total Trades</small>
+                <h4 class="mb-0">{{ session.total_trades }}</h4>
             </div>
         </div>
     </div>
 
-    <div class="card mb-4 bg-dark border-secondary">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="fas fa-chart-candlestick"></i> Interactive Price Chart</span>
-            <span class="badge bg-secondary">TradingView Engine</span>
+    <div class="card mb-3 bg-dark border-secondary overflow-hidden">
+        <div class="chart-toolbar">
+            <div class="d-flex gap-1 align-items-center">
+                <button class="btn-chart-ctrl active" onclick="changeTF(1, this)">1m</button>
+                <button class="btn-chart-ctrl" onclick="changeTF(5, this)">5m</button>
+                <button class="btn-chart-ctrl" onclick="changeTF(15, this)">15m</button>
+                <button class="btn-chart-ctrl" onclick="changeTF(60, this)">1h</button>
+            </div>
+
+            <div class="vr mx-2 bg-secondary"></div>
+
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="markerToggle" checked onchange="toggleMarkers()">
+                <label class="form-check-label small text-muted" for="markerToggle">Show Signals</label>
+            </div>
+
+            <div class="ms-auto d-flex gap-2">
+                <button class="btn-chart-ctrl" onclick="resetChart()"><i class="fas fa-expand"></i> Reset</button>
+                <button class="btn-chart-ctrl" onclick="toggleLogScale(this)">LOG</button>
+            </div>
         </div>
+
         <div class="card-body p-0 position-relative">
-            <div id="tv-chart" style="width: 100%; height: 700px; background-color: #131722;"></div>
-            <div style="position: absolute; bottom: 20px; left: 20px; color: rgba(255, 255, 255, 0.1); font-size: 24px; font-weight: bold; pointer-events: none; z-index: 10;">
-                Backtest Results | {{ session.symbol }}
-            </div>
+            <div id="tv-chart" style="width: 100%; height: 500px; background-color: #131722;"></div>
         </div>
     </div>
 
-    <div class="card bg-dark border-secondary mb-5">
-        <div class="card-header" data-bs-toggle="collapse" data-bs-target="#tradeHistory" style="cursor: pointer;">
-            <i class="fas fa-list"></i> Trade History (Click to expand)
+    <div class="card bg-dark border-secondary">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <span class="small fw-bold"><i class="fas fa-list"></i> EXECUTION LOG</span>
+            <span class="badge bg-primary">{{ trades|length }} Trades</span>
         </div>
-        <div id="tradeHistory" class="collapse show">
-            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
-                <table class="table table-dark table-sm table-hover mb-0">
-                    <thead style="position: sticky; top: 0; background: #212529; z-index: 5;">
-                        <tr>
-                            <th>Ticket</th>
-                            <th>Type</th>
-                            <th>Open Time</th>
-                            <th>Entry</th>
-                            <th>Exit</th>
-                            <th>P/L</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for trade in trades %}
-                        <tr>
-                            <td>#{{ trade.ticket }}</td>
-                            <td><span class="badge {% if trade.direction == 'BUY' %}bg-success{% else %}bg-danger{% endif %}">{{ trade.direction }}</span></td>
-                            <td>{{ trade.open_time|date:"Y-m-d H:i" }}</td>
-                            <td>{{ trade.entry_price|stringformat:".3f" }}</td>
-                            <td>{{ trade.exit_price|stringformat:".3f" }}</td>
-                            <td class="{% if trade.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">${{ trade.net_profit|stringformat:".2f" }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+        <div class="trade-table-container">
+            <table class="table table-dark table-sm table-hover mb-0" style="font-size: 0.85rem;">
+                <thead class="sticky-top bg-dark">
+                    <tr>
+                        <th>Ticket</th>
+                        <th>Type</th>
+                        <th>Open Time</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>P/L</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                    <tr style="cursor: pointer;" onclick="focusTrade({{ trade.open_time|date:'U' }})">
+                        <td>#{{ trade.ticket }}</td>
+                        <td>
+                            <span class="badge {% if trade.direction == 'BUY' %}bg-primary{% else %}bg-warning text-dark{% endif %}">
+                                {{ trade.direction }}
+                            </span>
+                        </td>
+                        <td>{{ trade.open_time|date:"Y-m-d H:i" }}</td>
+                        <td>{{ trade.entry_price|stringformat:".2f" }}</td>
+                        <td>{{ trade.exit_price|stringformat:".2f" }}</td>
+                        <td class="fw-bold {% if trade.net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            ${{ trade.net_profit|stringformat:".2f" }}
+                        </td>
+                        <td class="text-muted small">{{ trade.entry_reason }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
-<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <script>
-    document.addEventListener("DOMContentLoaded", function() {
-        const candleData = JSON.parse('{{ chart_data_json|escapejs }}');
-        const volumeData = JSON.parse('{{ volume_data_json|escapejs }}');
-        const markersData = JSON.parse('{{ markers_data_json|escapejs }}');
-        const container = document.getElementById('tv-chart');
+    let chart, candlestickSeries, volumeSeries;
+    let rawData = { candles: [], volume: [], markers: [] };
+    let currentMarkers = [];
+    let markersVisible = true;
+    let currentMinutes = 1;
+    const container = document.getElementById('tv-chart');
 
-        if (!candleData || candleData.length === 0) {
-            container.innerHTML = '<div class="p-5 text-center text-muted h4 mt-5"><i class="fas fa-exclamation-triangle"></i> No MT5 Chart Data Available for this timeframe.<br><small class="fs-6">Ensure MetaTrader 5 is connected and historical data exists.</small></div>';
-            return;
+    document.addEventListener("DOMContentLoaded", async () => {
+        try {
+            const response = await fetch("{% url 'session_chart_data' session.id %}");
+            const data = await response.json();
+
+            rawData.candles = data.chart_data.sort((a, b) => a.time - b.time);
+            rawData.volume = data.volume_data.sort((a, b) => a.time - b.time);
+            rawData.markers = data.markers_data || [];
+
+            initChart();
+            renderData(1);
+        } catch (e) {
+            container.innerHTML = '<div class="text-danger p-5 text-center">Data fetch failed. Run backtest first.</div>';
         }
-
-        const chartOptions = {
-            layout: {
-                background: { type: 'solid', color: '#131722' },
-                textColor: '#d1d4dc',
-            },
-            grid: {
-                vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
-                horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
-            },
-            crosshair: {
-                mode: LightweightCharts.CrosshairMode.Normal,
-            },
-            rightPriceScale: {
-                borderColor: 'rgba(197, 203, 206, 0.8)',
-            },
-            timeScale: {
-                borderColor: 'rgba(197, 203, 206, 0.8)',
-                timeVisible: true,
-                secondsVisible: false,
-            },
-        };
-
-        const chart = LightweightCharts.createChart(container, chartOptions);
-
-        const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a',
-            downColor: '#ef5350',
-            borderVisible: false,
-            wickUpColor: '#26a69a',
-            wickDownColor: '#ef5350',
-        });
-        candlestickSeries.setData(candleData);
-
-        const volumeSeries = chart.addHistogramSeries({
-            color: '#26a69a',
-            priceFormat: { type: 'volume' },
-            priceScaleId: '',
-        });
-
-        volumeSeries.priceScale().applyOptions({
-            scaleMargins: {
-                top: 0.8,
-                bottom: 0,
-            },
-        });
-        volumeSeries.setData(volumeData);
-
-        if (markersData.length > 0) {
-            candlestickSeries.setMarkers(markersData);
-        }
-
-        new ResizeObserver(entries => {
-            if (entries.length === 0 || entries[0].target !== container) { return; }
-            const newRect = entries[0].contentRect;
-            chart.applyOptions({ height: newRect.height, width: newRect.width });
-        }).observe(container);
-
-        chart.timeScale().fitContent();
     });
+
+    function initChart() {
+        chart = LightweightCharts.createChart(container, {
+            layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#242733' }, horzLines: { color: '#242733' } },
+            timeScale: { timeVisible: true, borderColor: '#363c4e' },
+            rightPriceScale: { borderColor: '#363c4e' },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        });
+
+        candlestickSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        volumeSeries = chart.addHistogramSeries({
+            color: '#26a69a', priceFormat: { type: 'volume' }, priceScaleId: '',
+        });
+        volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+
+        new ResizeObserver(() => chart.resize(container.clientWidth, container.clientHeight)).observe(container);
+    }
+
+    function aggregateData(minutes) {
+        if (minutes === 1) return { c: rawData.candles, v: rawData.volume };
+        const newCandles = [], newVolume = [], interval = minutes * 60;
+
+        for (let i = 0; i < rawData.candles.length; i++) {
+            const c = rawData.candles[i];
+            const ts = Math.floor(c.time / interval) * interval;
+            let last = newCandles[newCandles.length - 1];
+
+            if (!last || last.time !== ts) {
+                newCandles.push({ ...c, time: ts });
+                newVolume.push({ ...rawData.volume[i], time: ts });
+            } else {
+                last.high = Math.max(last.high, c.high);
+                last.low = Math.min(last.low, c.low);
+                last.close = c.close;
+                newVolume[newVolume.length - 1].value += rawData.volume[i].value;
+            }
+        }
+        return { c: newCandles, v: newVolume };
+    }
+
+    function renderData(minutes) {
+        currentMinutes = minutes;
+        const agg = aggregateData(minutes);
+        candlestickSeries.setData(agg.c);
+        volumeSeries.setData(agg.v);
+
+        // Prepare Markers
+        const interval = minutes * 60;
+        const markers = rawData.markers.map(m => ({
+            ...m, time: Math.floor(m.time / interval) * interval
+        }));
+        currentMarkers = markers.filter((v, i, a) => a.findIndex(t => (t.time === v.time && t.text === v.text)) === i);
+
+        updateMarkersVisibility();
+        chart.timeScale().fitContent();
+    }
+
+    function updateMarkersVisibility() {
+        candlestickSeries.setMarkers(markersVisible ? currentMarkers : []);
+    }
+
+    function toggleMarkers() {
+        markersVisible = document.getElementById('markerToggle').checked;
+        updateMarkersVisibility();
+    }
+
+    function changeTF(minutes, btn) {
+        document.querySelectorAll('.btn-chart-ctrl').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderData(minutes);
+    }
+
+    function resetChart() { chart.timeScale().fitContent(); }
+
+    function toggleLogScale(btn) {
+        const isLog = btn.classList.toggle('active');
+        chart.priceScale('right').applyOptions({
+            mode: isLog ? LightweightCharts.PriceScaleMode.Logarithmic : LightweightCharts.PriceScaleMode.Normal,
+        });
+    }
+
+    function focusTrade(timestamp) {
+        // Scroll chart to the specific trade time
+        chart.timeScale().scrollToPosition(0, false);
+        chart.timeScale().setVisibleRange({
+            from: parseInt(timestamp) - (currentMinutes * 60 * 50),
+            to: parseInt(timestamp) + (currentMinutes * 60 * 50)
+        });
+    }
 </script>
 {% endblock %}

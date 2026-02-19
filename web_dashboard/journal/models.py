@@ -39,3 +39,7 @@ class EquityPoint(models.Model):
     balance = models.FloatField()
     equity = models.FloatField()
     drawdown_percent = models.FloatField()
+
+class ChartData(models.Model):
+    session = models.OneToOneField(BacktestSession, on_delete=models.CASCADE, related_name='chart_data_cache')
+    payload = models.BinaryField()

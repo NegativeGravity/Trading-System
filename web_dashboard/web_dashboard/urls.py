@@ -1,9 +1,8 @@
-from django.contrib import admin
 from django.urls import path
-from journal.views import dashboard, session_detail
+from journal import views
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('', dashboard, name='dashboard'),
-    path('session/<int:session_id>/', session_detail, name='session_detail'),
+    path('', views.dashboard, name='dashboard'),
+    path('session/<int:session_id>/', views.session_detail, name='session_detail'),
+    path('session/<int:session_id>/chart-data/', views.session_chart_data, name='session_chart_data'),
 ]

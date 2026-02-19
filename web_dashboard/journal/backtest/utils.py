@@ -1,27 +1,17 @@
-import os
 import logging
 from typing import List, Dict, Any
 from django.db import transaction
 from django.utils.timezone import make_aware
 from journal.models import BacktestSession, Trade, EquityPoint
-from journal.backtest.chart_generator import TradeChartGenerator
+from journal.backtest.chart_generator import export_tv_data
 
 logger = logging.getLogger(__name__)
 
-
 def save_backtest_results(
-        agent_name: str,
-        symbol: str,
-        timeframe: str,
-        initial_balance: float,
-        spread: float,
-        candles: List[Any],
-        broker: Any,
-        equity_curve: List[Dict[str, Any]]
+    agent_name: str, symbol: str, timeframe: str, initial_balance: float,
+    spread: float, candles: List[Any], broker: Any, equity_curve: List[Dict[str, Any]]
 ) -> None:
-
     if not broker.closed_history:
-        print("⚠️ No trades executed. Skipping database save.")
         return
 
     total_trades = len(broker.closed_history)
@@ -46,7 +36,7 @@ def save_backtest_results(
                 total_trades=total_trades
             )
 
-            trade_objects = [
+            Trade.objects.bulk_create([
                 Trade(
                     session=session,
                     ticket=t['ticket'],
@@ -64,11 +54,10 @@ def save_backtest_results(
                     entry_reason=t['entry_reason'],
                     exit_reason=t['exit_reason']
                 ) for t in broker.closed_history
-            ]
-            Trade.objects.bulk_create(trade_objects, batch_size=1000)
+            ], batch_size=1000)
 
             step = max(1, len(equity_curve) // 1000)
-            equity_objects = [
+            EquityPoint.objects.bulk_create([
                 EquityPoint(
                     session=session,
                     timestamp=make_aware(p['timestamp']),
@@ -76,17 +65,9 @@ def save_backtest_results(
                     equity=p['equity'],
                     drawdown_percent=p['dd']
                 ) for p in equity_curve[::step]
-            ]
-            EquityPoint.objects.bulk_create(equity_objects, batch_size=2000)
+            ], batch_size=2000)
 
-        filename = f"chart_{agent_name}_{symbol}.html"
-        chart_gen = TradeChartGenerator(candles, broker.closed_history, symbol)
-        chart_gen.save_html(filename)
-
-        print(f"✅ Results Saved Successfully.")
-        print(
-            f"📊 Trades: {total_trades} | Win Rate: {win_rate:.2f}% | Net Profit: ${broker.balance - initial_balance:.2f}")
+        export_tv_data(session.id, candles, broker.closed_history)
 
     except Exception as e:
         logger.error(f"Failed to save backtest results: {str(e)}")
-        print(f"❌ Error saving results to database: {str(e)}")
